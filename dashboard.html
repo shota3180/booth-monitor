@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>大学祭 店舗点検リアルタイム監視パネル</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: #0f172a;
+      color: #f8fafc;
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      padding: 24px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 2px solid #1e293b;
+    }
+
+    h1 { font-size: 1.6rem; font-weight: bold; }
+    .sync-status { font-size: 0.9rem; color: #38bdf8; font-weight: bold; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 20px;
+    }
+
+    .card {
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 20px;
+      border: 3px solid #334155;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: all 0.15s ease;
+    }
+
+    .booth-title { font-size: 1.5rem; font-weight: bold; }
+    .status-text { font-size: 0.95rem; color: #94a3b8; font-weight: 500; }
+
+    .btn-group {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-action {
+      flex: 1;
+      padding: 12px 8px;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: bold;
+      cursor: pointer;
+      color: #94a3b8;
+      background: #334155;
+      transition: transform 0.05s, background-color 0.15s;
+    }
+    .btn-action:disabled { cursor: not-allowed; opacity: 0.5; }
+    .btn-action:not(:disabled):active { transform: scale(0.95); }
+
+    .btn-cancel {
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: bold;
+      cursor: pointer;
+      color: #fca5a5;
+      background: #7f1d1d;
+      display: none; /* 初期状態は非表示 */
+      transition: transform 0.05s, background-color 0.15s;
+    }
+    .btn-cancel:active { transform: scale(0.95); }
+
+    /* 🚨 点検要請中 */
+    .card.requested {
+      border-color: #ef4444 !important;
+      background: #450a0a !important;
+      animation: alert-flash 0.3s infinite alternate;
+    }
+    .card.requested .status-text { color: #fca5a5; font-weight: bold; }
+    .card.requested .btn-action {
+      background: #ef4444;
+      color: #ffffff;
+      box-shadow: 0 0 15px rgba(239, 68, 68, 0.8);
+    }
+    .card.requested .btn-cancel {
+      display: block; /* 要請発生時のみ「❌ 取消」ボタンを表示 */
+    }
+
+    /* 🟡 点検中 */
+    .card.inspecting {
+      border-color: #f59e0b;
+      background: #291e07;
+    }
+    .card.inspecting .status-text { color: #fde047; }
+    .card.inspecting .btn-action {
+      background: #d97706;
+      color: #ffffff;
+    }
+
+    /* 🟢 完了 */
+    .card.completed {
+      border-color: #10b981;
+      background: #022c22;
+    }
+    .card.completed .status-text { color: #6ee7b7; }
+    .card.completed .btn-action {
+      background: #059669;
+      color: #ffffff;
+    }
+
+    @keyframes alert-flash {
+      0% {
+        box-shadow: 0 0 10px #ef4444, inset 0 0 8px #ef4444;
+        transform: scale(1);
+      }
+      100% {
+        box-shadow: 0 0 35px #ef4444, inset 0 0 25px #ef4444;
+        transform: scale(1.03);
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>🚨 藍涼祭模擬店点検一覧</h1>
+    <div class="sync-status" id="syncTime">1秒間隔で高速同期中...</div>
+  </header>
+
+  <div class="grid" id="boothContainer"></div>
+
+  <script>
+    // 🔗 ご自身のGAS WebアプリURLを設定してください
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbzzVKDx1To-bXFujzI_tWBoUz-MjJEgmr-BguyagujeZPJMcARnEOQ0Izisd4-pL2PUyw/exec";
+
+    let lastStatuses = {};
+    let audioCtx = null;
+
+    // 警告音再生
+    function playAlertSound() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(900, audioCtx.currentTime);
+      osc.frequency.linearRampToValueAtTime(600, audioCtx.currentTime + 0.2);
+
+      gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.2);
+    }
+
+    // グリッド初期化
+    function initGrid() {
+      const container = document.getElementById('boothContainer');
+      container.innerHTML = '';
+
+      for (let i = 1; i <= 20; i++) {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.id = `card-${i}`;
+        card.innerHTML = `
+          <div class="booth-title">店舗 ${i}</div>
+          <div class="status-text" id="status-${i}">🟢 待機中</div>
+          <div class="btn-group">
+            <button class="btn-action" id="btn-${i}" onclick="handleButtonClick(${i})">待機中</button>
+            <button class="btn-cancel" id="btn-cancel-${i}" onclick="handleCancelClick(${i})">❌ 取消</button>
+          </div>
+        `;
+        container.appendChild(card);
+      }
+    }
+
+    // 1秒間隔でステータスを取得・更新
+    async function syncStatuses() {
+      try {
+        const res = await fetch(`${GAS_URL}?_t=${Date.now()}`);
+        const data = await res.json();
+        let soundRequired = false;
+
+        for (let i = 1; i <= 20; i++) {
+          const key = String(i);
+          const status = data[key] || 'waiting';
+          
+          const card = document.getElementById(`card-${i}`);
+          const statusText = document.getElementById(`status-${i}`);
+          const btn = document.getElementById(`btn-${i}`);
+
+          if (status === 'requested' && lastStatuses[key] !== 'requested') {
+            soundRequired = true;
+          }
+
+          card.className = 'card ' + status;
+
+          if (status === 'requested') {
+            statusText.textContent = '🚨 点検要請が発生中！';
+            btn.textContent = '▶ 点検開始';
+            btn.disabled = false;
+          } else if (status === 'inspecting') {
+            statusText.textContent = '🟡 現在点検中...';
+            btn.textContent = '✔ 点検完了にする';
+            btn.disabled = false;
+          } else if (status === 'completed') {
+            statusText.textContent = '⭕ 点検完了';
+            btn.textContent = 'リセット（待機へ）';
+            btn.disabled = false;
+          } else {
+            statusText.textContent = '🟢 待機中';
+            btn.textContent = '待機中';
+            btn.disabled = true;
+          }
+
+          lastStatuses[key] = status;
+        }
+
+        if (soundRequired) playAlertSound();
+        document.getElementById('syncTime').textContent = `最終更新: ${new Date().toLocaleTimeString()} (1s同期中)`;
+
+      } catch (e) {
+        document.getElementById('syncTime').textContent = '通信試行中...';
+      }
+    }
+
+    // メインボタン処理（確認ダイアログ付き）
+    function handleButtonClick(booth) {
+      const key = String(booth);
+      const currentStatus = lastStatuses[key];
+      let nextStatus = 'waiting';
+
+      if (currentStatus === 'requested') {
+        nextStatus = 'inspecting';
+      } else if (currentStatus === 'inspecting') {
+        nextStatus = 'completed';
+      } else if (currentStatus === 'completed') {
+        // ⭕ 「点検完了」から「待機中（リセット）」に戻す際のみ確認を挟む
+        const confirmResult = confirm(`店舗 ${booth} の点検完了を取り消し、待機状態にリセットしますか？`);
+        if (!confirmResult) return; // 「いいえ」を押した場合は何もしない
+        nextStatus = 'waiting';
+      }
+
+      // 画面を即時更新
+      updateUiOptimistic(booth, nextStatus);
+
+      // バックグラウンドでGASに送信
+      fetch(`${GAS_URL}?action=update&booth=${booth}&status=${nextStatus}&_t=${Date.now()}`);
+    }
+
+    // ❌ 取消ボタン処理（確認ダイアログ付き）
+    function handleCancelClick(booth) {
+      // 要請取り消し時にも確認ダイアログを表示
+      const confirmResult = confirm(`店舗 ${booth} の点検要請を取り消しますか？`);
+      if (!confirmResult) return; // 「いいえ」を押した場合は何もしない
+
+      // 画面を即時「待機中」に更新
+      updateUiOptimistic(booth, 'waiting');
+
+      // バックグラウンドでGASに「cancel」送信
+      fetch(`${GAS_URL}?action=cancel&booth=${booth}&_t=${Date.now()}`);
+    }
+
+    // 楽観的UI更新
+    function updateUiOptimistic(booth, nextStatus) {
+      const key = String(booth);
+      lastStatuses[key] = nextStatus;
+      const card = document.getElementById(`card-${booth}`);
+      card.className = 'card ' + nextStatus;
+    }
+
+    // 初回操作時の音声許可
+    window.addEventListener('click', () => {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }, { once: true });
+
+    // 初期化・同期スタート
+    initGrid();
+    syncStatuses();
+    setInterval(syncStatuses, 1000);
+  </script>
+</body>
+</html>
