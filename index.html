@@ -140,7 +140,7 @@
 
   <script>
     // 🔗 ご自身のGAS WebアプリURLを設定してください
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbzzVKDx1To-bXFujzI_tWBoUz-MjJEgmr-BguyagujeZPJMcARnEOQ0Izisd4-pL2PUyw/exec";
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbxgjRKwAGZyPzGsC2k2-KRSG0qVT_hgaYfsBAQPHVOF4vDn0adIeTBEo1f-sIj3SYovNA/exec";
 
     let lastStatuses = {};
     let lockUntil = {}; // 各店舗の同期ロック期限（タイムスタンプ）
@@ -214,14 +214,14 @@
       }
     }
 
-    // 定期同期処理
+    // 定期同期処理（軽量タイムアウト2秒）
     async function syncStatuses() {
       if (isSyncing) return;
       isSyncing = true;
 
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000); // 2秒で諦める
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
 
         const res = await fetch(`${GAS_URL}?_t=${Date.now()}`, { signal: controller.signal });
         clearTimeout(timeoutId);
@@ -234,7 +234,7 @@
           const key = String(i);
           const serverStatus = data[key] || 'waiting';
 
-          // 🔒 ロック中の店舗はサーバーの古いデータで絶対上書きさせない
+          // 🔒 ロック中の店舗はサーバーの古いデータで上書きさせない
           if (lockUntil[key] && now < lockUntil[key]) {
             continue;
           } else {
@@ -253,7 +253,7 @@
         document.getElementById('syncTime').textContent = `最終更新: ${new Date().toLocaleTimeString()}`;
 
       } catch (e) {
-        // 重い時やエラー時は静かに無視
+        // 重い時やエラー時は無視
       } finally {
         isSyncing = false;
       }
@@ -279,10 +279,10 @@
       lastStatuses[key] = nextStatus;
       renderCard(booth, nextStatus);
 
-      // 2. 今から10秒間は同期処理による上書きをブロック（GASが遅くても元に戻らない）
+      // 2. 10秒間は同期による上書きをブロック
       lockUntil[key] = Date.now() + 10000;
 
-      // 3. バックグラウンドで送信（レスポンス待ちで画面を止めない）
+      // 3. バックグラウンドでGASへ送信
       fetch(`${GAS_URL}?action=update&booth=${booth}&status=${nextStatus}&_t=${Date.now()}`).catch(() => {});
     }
 
