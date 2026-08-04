@@ -62,7 +62,7 @@
       background: #334155;
       transition: transform 0.05s, background-color 0.15s;
     }
-    .btn-action:disabled { cursor: not-allowed; opacity: 0.5; }
+    .btn-action:disabled { cursor: not-allowed; opacity: 0.6; }
     .btn-action:not(:disabled):active { transform: scale(0.95); }
 
     .btn-cancel {
@@ -74,9 +74,10 @@
       cursor: pointer;
       color: #fca5a5;
       background: #7f1d1d;
-      display: none; /* 初期状態は非表示 */
+      display: none;
       transition: transform 0.05s, background-color 0.15s;
     }
+    .btn-cancel:disabled { cursor: not-allowed; opacity: 0.6; }
     .btn-cancel:active { transform: scale(0.95); }
 
     /* 🚨 点検要請中 */
@@ -92,7 +93,7 @@
       box-shadow: 0 0 15px rgba(239, 68, 68, 0.8);
     }
     .card.requested .btn-cancel {
-      display: block; /* 要請発生時のみ「❌ 取消」ボタンを表示 */
+      display: block;
     }
 
     /* 🟡 点検中 */
@@ -132,8 +133,8 @@
 <body>
 
   <header>
-    <h1>🚨 藍涼祭模擬店点検一覧</h1>
-    <div class="sync-status" id="syncTime">1秒間隔で高速同期中...</div>
+    <h1>🚨 大学祭ブース点検監視システム</h1>
+    <div class="sync-status" id="syncTime">リアルタイム同期中...</div>
   </header>
 
   <div class="grid" id="boothContainer"></div>
@@ -143,9 +144,12 @@
     const GAS_URL = "https://script.google.com/macros/s/AKfycbzzVKDx1To-bXFujzI_tWBoUz-MjJEgmr-BguyagujeZPJMcARnEOQ0Izisd4-pL2PUyw/exec";
 
     let lastStatuses = {};
+    let processingBooths = {}; // 現在通信中の店舗を管理
     let audioCtx = null;
 
-    // 警告音再生
+    // 指定ミリ秒待機する関数
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
     function playAlertSound() {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -167,7 +171,6 @@
       osc.stop(audioCtx.currentTime + 0.2);
     }
 
-    // グリッド初期化
     function initGrid() {
       const container = document.getElementById('boothContainer');
       container.innerHTML = '';
@@ -188,7 +191,36 @@
       }
     }
 
-    // 1秒間隔でステータスを取得・更新
+    function renderCard(booth, status) {
+      // 通信処理中の店舗は上書きしない
+      if (processingBooths[booth]) return;
+
+      const card = document.getElementById(`card-${booth}`);
+      const statusText = document.getElementById(`status-${booth}`);
+      const btn = document.getElementById(`btn-${booth}`);
+
+      card.className = 'card ' + status;
+
+      if (status === 'requested') {
+        statusText.textContent = '🚨 点検要請が発生中！';
+        btn.textContent = '▶ 点検開始';
+        btn.disabled = false;
+      } else if (status === 'inspecting') {
+        statusText.textContent = '🟡 現在点検中...';
+        btn.textContent = '✔ 点検完了にする';
+        btn.disabled = false;
+      } else if (status === 'completed') {
+        statusText.textContent = '⭕ 点検完了';
+        btn.textContent = 'リセット（待機へ）';
+        btn.disabled = false;
+      } else {
+        statusText.textContent = '🟢 待機中';
+        btn.textContent = '待機中';
+        btn.disabled = true;
+      }
+    }
+
+    // 定期同期処理
     async function syncStatuses() {
       try {
         const res = await fetch(`${GAS_URL}?_t=${Date.now()}`);
@@ -197,49 +229,44 @@
 
         for (let i = 1; i <= 20; i++) {
           const key = String(i);
-          const status = data[key] || 'waiting';
-          
-          const card = document.getElementById(`card-${i}`);
-          const statusText = document.getElementById(`status-${i}`);
-          const btn = document.getElementById(`btn-${i}`);
+          const serverStatus = data[key] || 'waiting';
 
-          if (status === 'requested' && lastStatuses[key] !== 'requested') {
+          // 通信中の店舗は定期同期による上書きを完全にガード
+          if (processingBooths[i]) continue;
+
+          if (serverStatus === 'requested' && lastStatuses[key] !== 'requested') {
             soundRequired = true;
           }
 
-          card.className = 'card ' + status;
-
-          if (status === 'requested') {
-            statusText.textContent = '🚨 点検要請が発生中！';
-            btn.textContent = '▶ 点検開始';
-            btn.disabled = false;
-          } else if (status === 'inspecting') {
-            statusText.textContent = '🟡 現在点検中...';
-            btn.textContent = '✔ 点検完了にする';
-            btn.disabled = false;
-          } else if (status === 'completed') {
-            statusText.textContent = '⭕ 点検完了';
-            btn.textContent = 'リセット（待機へ）';
-            btn.disabled = false;
-          } else {
-            statusText.textContent = '🟢 申請前';
-            btn.textContent = '申請前';
-            btn.disabled = true;
-          }
-
-          lastStatuses[key] = status;
+          renderCard(i, serverStatus);
+          lastStatuses[key] = serverStatus;
         }
 
         if (soundRequired) playAlertSound();
-        document.getElementById('syncTime').textContent = `最終更新: ${new Date().toLocaleTimeString()} (1s同期中)`;
+        document.getElementById('syncTime').textContent = `最終更新: ${new Date().toLocaleTimeString()}`;
 
       } catch (e) {
-        document.getElementById('syncTime').textContent = '通信試行中...';
+        // エラー時はスキップ
       }
     }
 
-    // メインボタン処理（確認ダイアログ付き）
-    function handleButtonClick(booth) {
+    // ⏳ 「更新中...」表示への切り替え処理
+    function setCardLoading(booth, isLoading, message = "⏳ 更新中...") {
+      processingBooths[booth] = isLoading;
+      const btn = document.getElementById(`btn-${booth}`);
+      const btnCancel = document.getElementById(`btn-cancel-${booth}`);
+      const statusText = document.getElementById(`status-${booth}`);
+
+      if (isLoading) {
+        btn.disabled = true;
+        if (btnCancel) btnCancel.disabled = true;
+        btn.textContent = message;
+        statusText.textContent = message;
+      }
+    }
+
+    // メインボタン処理（2秒間の待機時間を挟む）
+    async function handleButtonClick(booth) {
       const key = String(booth);
       const currentStatus = lastStatuses[key];
       let nextStatus = 'waiting';
@@ -249,49 +276,81 @@
       } else if (currentStatus === 'inspecting') {
         nextStatus = 'completed';
       } else if (currentStatus === 'completed') {
-        // ⭕ 「点検完了」から「待機中（リセット）」に戻す際のみ確認を挟む
         const confirmResult = confirm(`店舗 ${booth} の点検完了を取り消し、待機状態にリセットしますか？`);
-        if (!confirmResult) return; // 「いいえ」を押した場合は何もしない
+        if (!confirmResult) return;
         nextStatus = 'waiting';
       }
 
-      // 画面を即時更新
-      updateUiOptimistic(booth, nextStatus);
+      // 1. ボタンを押したら即座に「更新中...」と表示し、連打できないよう固定
+      setCardLoading(booth, true, "⏳ 更新中...");
 
-      // バックグラウンドでGASに送信
-      fetch(`${GAS_URL}?action=update&booth=${booth}&status=${nextStatus}&_t=${Date.now()}`);
+      try {
+        // 2. GASへステータス更新リクエストを送信 ＆ 必ず「最低2秒間」待つ
+        const fetchPromise = fetch(`${GAS_URL}?action=update&booth=${booth}&status=${nextStatus}&_t=${Date.now()}`);
+        const timerPromise = sleep(2000); // 2000ms = 2秒間待機
+
+        // リクエスト完了と2秒タイマーの両方が終わるまで待機
+        const [res] = await Promise.all([fetchPromise, timerPromise]);
+        const data = await res.json();
+
+        if (data.result === 'success') {
+          // 3. 2秒後に画面を新しいステータスへ切り替え
+          lastStatuses[key] = nextStatus;
+          processingBooths[booth] = false;
+          renderCard(booth, nextStatus);
+        } else {
+          alert('更新に失敗しました。もう一度お試しください。');
+          processingBooths[booth] = false;
+          syncStatuses();
+        }
+      } catch (e) {
+        alert('通信エラーが発生しました。');
+        processingBooths[booth] = false;
+        syncStatuses();
+      }
     }
 
-    // ❌ 取消ボタン処理（確認ダイアログ付き）
-    function handleCancelClick(booth) {
-      // 要請取り消し時にも確認ダイアログを表示
-      const confirmResult = confirm(`店舗 ${booth} の点検要請を取り消しますか？`);
-      if (!confirmResult) return; // 「いいえ」を押した場合は何もしない
-
-      // 画面を即時「待機中」に更新
-      updateUiOptimistic(booth, 'waiting');
-
-      // バックグラウンドでGASに「cancel」送信
-      fetch(`${GAS_URL}?action=cancel&booth=${booth}&_t=${Date.now()}`);
-    }
-
-    // 楽観的UI更新
-    function updateUiOptimistic(booth, nextStatus) {
+    // ❌ 取消ボタン処理（2秒間の待機時間を挟む）
+    async function handleCancelClick(booth) {
       const key = String(booth);
-      lastStatuses[key] = nextStatus;
-      const card = document.getElementById(`card-${booth}`);
-      card.className = 'card ' + nextStatus;
+      const confirmResult = confirm(`店舗 ${booth} の点検要請を取り消しますか？`);
+      if (!confirmResult) return;
+
+      // 1. 即座に「更新中...」に表示を切り替え
+      setCardLoading(booth, true, "⏳ 更新中...");
+
+      try {
+        // 2. GASへ送信 ＆ 最低2秒間待つ
+        const fetchPromise = fetch(`${GAS_URL}?action=cancel&booth=${booth}&_t=${Date.now()}`);
+        const timerPromise = sleep(2000);
+
+        const [res] = await Promise.all([fetchPromise, timerPromise]);
+        const data = await res.json();
+
+        if (data.result === 'success') {
+          // 3. 2秒後に待機状態へ戻す
+          lastStatuses[key] = 'waiting';
+          processingBooths[booth] = false;
+          renderCard(booth, 'waiting');
+        } else {
+          alert('取り消しに失敗しました。');
+          processingBooths[booth] = false;
+          syncStatuses();
+        }
+      } catch (e) {
+        alert('通信エラーが発生しました。');
+        processingBooths[booth] = false;
+        syncStatuses();
+      }
     }
 
-    // 初回操作時の音声許可
     window.addEventListener('click', () => {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }, { once: true });
 
-    // 初期化・同期スタート
     initGrid();
     syncStatuses();
-    setInterval(syncStatuses, 1000);
+    setInterval(syncStatuses, 1500);
   </script>
 </body>
 </html>
