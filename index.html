@@ -141,7 +141,7 @@
 
   <script>
     // 🔗 ご自身のGAS WebアプリURLを設定してください
-    const GAS_URL = "YOUR_GAS_WEB_APP_URL_HERE";
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbxgjRKwAGZyPzGsC2k2-KRSG0qVT_hgaYfsBAQPHVOF4vDn0adIeTBEo1f-sIj3SYovNA/exec";
 
     let lastStatuses = {};
     let processingBooths = {};
@@ -172,11 +172,12 @@
       osc.stop(audioCtx.currentTime + 0.2);
     }
 
+    // ⚡ 100店舗分のカード要素を初期化
     function initGrid() {
       const container = document.getElementById('boothContainer');
       container.innerHTML = '';
 
-      for (let i = 1; i <= 20; i++) {
+      for (let i = 1; i <= 100; i++) {
         const card = document.createElement('div');
         card.className = 'card';
         card.id = `card-${i}`;
@@ -199,6 +200,8 @@
       const statusText = document.getElementById(`status-${booth}`);
       const btn = document.getElementById(`btn-${booth}`);
 
+      if (!card || !statusText || !btn) return;
+
       card.className = 'card ' + status;
 
       if (status === 'requested') {
@@ -220,13 +223,14 @@
       }
     }
 
+    // ⚡ 100店舗分のステータスを同期
     async function syncStatuses() {
       try {
         const res = await fetch(`${GAS_URL}?_t=${Date.now()}`);
         const data = await res.json();
         let soundRequired = false;
 
-        for (let i = 1; i <= 20; i++) {
+        for (let i = 1; i <= 100; i++) {
           const key = String(i);
           const serverStatus = data[key] || 'waiting';
 
