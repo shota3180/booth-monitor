@@ -147,9 +147,6 @@
     let processingBooths = {}; // 現在通信中の店舗を管理
     let audioCtx = null;
 
-    // 指定ミリ秒待機する関数
-    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
     // ⏱️ タイムアウト（5秒）付きfetch関数
     async function fetchWithTimeout(url, timeoutMs = 5000) {
       const controller = new AbortController();
@@ -234,10 +231,10 @@
       }
     }
 
-    // 定期同期処理（軽量タイムアウト3秒）
+    // 定期同期処理（軽量タイムアウト2.5秒）
     async function syncStatuses() {
       try {
-        const res = await fetchWithTimeout(`${GAS_URL}?_t=${Date.now()}`, 3000);
+        const res = await fetchWithTimeout(`${GAS_URL}?_t=${Date.now()}`, 2500);
         const data = await res.json();
         let soundRequired = false;
 
@@ -260,7 +257,7 @@
         document.getElementById('syncTime').textContent = `最終更新: ${new Date().toLocaleTimeString()}`;
 
       } catch (e) {
-        // エラー時は静かにスキップ
+        // エラー時はスキップ
       }
     }
 
@@ -279,7 +276,7 @@
       }
     }
 
-    // メインボタン処理（5秒タイムアウト ＆ 最低2秒待機）
+    // メインボタン処理（余計な待機なし・最速レスポンス）
     async function handleButtonClick(booth) {
       const key = String(booth);
       const currentStatus = lastStatuses[key];
@@ -295,34 +292,29 @@
         nextStatus = 'waiting';
       }
 
-      // 1. 即座に「更新中...」に切り替え
+      // 1. ボタンを押したら即座に「更新中...」にして誤連打をブロック
       setCardLoading(booth, true, "⏳ 更新中...");
 
       try {
-        // 2. 5秒タイムアウト付き送信 ＆ 最低2秒待機
-        const fetchPromise = fetchWithTimeout(`${GAS_URL}?action=update&booth=${booth}&status=${nextStatus}&_t=${Date.now()}`, 5000);
-        const timerPromise = sleep(2000);
-
-        const [res] = await Promise.all([fetchPromise, timerPromise]);
+        // 2. 余計な睡眠時間は挟まず、GASからのレスポンスが届き次第すぐ画面切替
+        const res = await fetchWithTimeout(`${GAS_URL}?action=update&booth=${booth}&status=${nextStatus}&_t=${Date.now()}`, 5000);
         const data = await res.json();
 
         if (data.result === 'success') {
-          // 成功時に最新へ更新
           lastStatuses[key] = nextStatus;
           processingBooths[booth] = false;
-          renderCard(booth, nextStatus);
+          renderCard(booth, nextStatus); // ⚡ 返事が来たら即切り替え！
         } else {
           throw new Error('Server returned error');
         }
       } catch (e) {
-        // 5秒経過（タイムアウト）または通信エラーが発生した場合
         alert('通信に時間がかかりすぎたか、エラーが発生しました。もう一度お試しください。');
         processingBooths[booth] = false;
-        syncStatuses(); // 元の状態に復元
+        syncStatuses();
       }
     }
 
-    // ❌ 取消ボタン処理（5秒タイムアウト ＆ 最低2秒待機）
+    // ❌ 取消ボタン処理（余計な待機なし・最速レスポンス）
     async function handleCancelClick(booth) {
       const key = String(booth);
       const confirmResult = confirm(`店舗 ${booth} の点検要請を取り消しますか？`);
@@ -331,10 +323,7 @@
       setCardLoading(booth, true, "⏳ 更新中...");
 
       try {
-        const fetchPromise = fetchWithTimeout(`${GAS_URL}?action=cancel&booth=${booth}&_t=${Date.now()}`, 5000);
-        const timerPromise = sleep(2000);
-
-        const [res] = await Promise.all([fetchPromise, timerPromise]);
+        const res = await fetchWithTimeout(`${GAS_URL}?action=cancel&booth=${booth}&_t=${Date.now()}`, 5000);
         const data = await res.json();
 
         if (data.result === 'success') {
@@ -347,7 +336,7 @@
       } catch (e) {
         alert('通信に時間がかかりすぎたか、エラーが発生しました。もう一度お試しください。');
         processingBooths[booth] = false;
-        syncStatuses(); // 元の状態に復元
+        syncStatuses();
       }
     }
 
@@ -357,7 +346,7 @@
 
     initGrid();
     syncStatuses();
-    setInterval(syncStatuses, 1500);
+    setInterval(syncStatuses, 1000); // 同期取得も1秒間隔に上げてレスポンス強化
   </script>
 </body>
 </html>
