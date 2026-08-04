@@ -62,7 +62,7 @@
       background: #334155;
       transition: transform 0.05s, background-color 0.15s;
     }
-    .btn-action:disabled { cursor: not-allowed; opacity: 0.5; }
+    .btn-action:disabled { cursor: not-allowed; opacity: 0.6; }
     .btn-action:not(:disabled):active { transform: scale(0.95); }
 
     .btn-cancel {
@@ -77,6 +77,7 @@
       display: none;
       transition: transform 0.05s, background-color 0.15s;
     }
+    .btn-cancel:disabled { cursor: not-allowed; opacity: 0.6; }
     .btn-cancel:active { transform: scale(0.95); }
 
     /* 🚨 点検要請中 */
@@ -140,12 +141,15 @@
 
   <script>
     // 🔗 ご自身のGAS WebアプリURLを設定してください
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbxgjRKwAGZyPzGsC2k2-KRSG0qVT_hgaYfsBAQPHVOF4vDn0adIeTBEo1f-sIj3SYovNA/exec";
+    const GAS_URL = "YOUR_GAS_WEB_APP_URL_HERE";
 
     let lastStatuses = {};
-    let lockUntil = {}; // 各店舗の同期ロック期限（タイムスタンプ）
-    let isSyncing = false;
+    let processingBooths = {};
     let audioCtx = null;
+
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
 
     function playAlertSound() {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -189,6 +193,8 @@
     }
 
     function renderCard(booth, status) {
+      if (processingBooths[booth]) return;
+
       const card = document.getElementById(`card-${booth}`);
       const statusText = document.getElementById(`status-${booth}`);
       const btn = document.getElementById(`btn-${booth}`);
@@ -214,32 +220,17 @@
       }
     }
 
-    // 定期同期処理（軽量タイムアウト2秒）
     async function syncStatuses() {
-      if (isSyncing) return;
-      isSyncing = true;
-
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
-
-        const res = await fetch(`${GAS_URL}?_t=${Date.now()}`, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        
+        const res = await fetch(`${GAS_URL}?_t=${Date.now()}`);
         const data = await res.json();
         let soundRequired = false;
-        const now = Date.now();
 
         for (let i = 1; i <= 20; i++) {
           const key = String(i);
           const serverStatus = data[key] || 'waiting';
 
-          // 🔒 ロック中の店舗はサーバーの古いデータで上書きさせない
-          if (lockUntil[key] && now < lockUntil[key]) {
-            continue;
-          } else {
-            delete lockUntil[key];
-          }
+          if (processingBooths[i]) continue;
 
           if (serverStatus === 'requested' && lastStatuses[key] !== 'requested') {
             soundRequired = true;
@@ -253,14 +244,25 @@
         document.getElementById('syncTime').textContent = `最終更新: ${new Date().toLocaleTimeString()}`;
 
       } catch (e) {
-        // 重い時やエラー時は無視
-      } finally {
-        isSyncing = false;
+        // エラー時はスキップ
       }
     }
 
-    // メインボタン処理（0秒で画面切り替え）
-    function handleButtonClick(booth) {
+    function setCardLoading(booth, isLoading, message = "⏳ 更新中...") {
+      processingBooths[booth] = isLoading;
+      const btn = document.getElementById(`btn-${booth}`);
+      const btnCancel = document.getElementById(`btn-cancel-${booth}`);
+      const statusText = document.getElementById(`status-${booth}`);
+
+      if (isLoading) {
+        btn.disabled = true;
+        if (btnCancel) btnCancel.disabled = true;
+        btn.textContent = message;
+        statusText.textContent = message;
+      }
+    }
+
+    async function handleButtonClick(booth) {
       const key = String(booth);
       const currentStatus = lastStatuses[key];
       let nextStatus = 'waiting';
@@ -275,32 +277,51 @@
         nextStatus = 'waiting';
       }
 
-      // 1. 0秒で手元の画面を切り替え
-      lastStatuses[key] = nextStatus;
-      renderCard(booth, nextStatus);
+      setCardLoading(booth, true, "⏳ 更新中...");
 
-      // 2. 10秒間は同期による上書きをブロック
-      lockUntil[key] = Date.now() + 10000;
+      try {
+        const res = await fetch(`${GAS_URL}?action=update&booth=${booth}&status=${nextStatus}&_t=${Date.now()}`);
+        const data = await res.json();
 
-      // 3. バックグラウンドでGASへ送信
-      fetch(`${GAS_URL}?action=update&booth=${booth}&status=${nextStatus}&_t=${Date.now()}`).catch(() => {});
+        if (data.result === 'success') {
+          await sleep(2000); // 反映待ち用の安全ウエイト
+          lastStatuses[key] = nextStatus;
+          processingBooths[booth] = false;
+          renderCard(booth, nextStatus);
+        } else {
+          throw new Error('Server returned error');
+        }
+      } catch (e) {
+        alert('更新処理に失敗しました。もう一度お試しください。');
+        processingBooths[booth] = false;
+        syncStatuses();
+      }
     }
 
-    // ❌ 取消ボタン処理（0秒で画面切り替え）
-    function handleCancelClick(booth) {
+    async function handleCancelClick(booth) {
       const key = String(booth);
       const confirmResult = confirm(`店舗 ${booth} の点検要請を取り消しますか？`);
       if (!confirmResult) return;
 
-      // 1. 0秒で画面切り替え
-      lastStatuses[key] = 'waiting';
-      renderCard(booth, 'waiting');
+      setCardLoading(booth, true, "⏳ 更新中...");
 
-      // 2. 10秒間ロック
-      lockUntil[key] = Date.now() + 10000;
+      try {
+        const res = await fetch(`${GAS_URL}?action=cancel&booth=${booth}&_t=${Date.now()}`);
+        const data = await res.json();
 
-      // 3. バックグラウンド送信
-      fetch(`${GAS_URL}?action=cancel&booth=${booth}&_t=${Date.now()}`).catch(() => {});
+        if (data.result === 'success') {
+          await sleep(2000);
+          lastStatuses[key] = 'waiting';
+          processingBooths[booth] = false;
+          renderCard(booth, 'waiting');
+        } else {
+          throw new Error('Server returned error');
+        }
+      } catch (e) {
+        alert('キャンセル処理に失敗しました。もう一度お試しください。');
+        processingBooths[booth] = false;
+        syncStatuses();
+      }
     }
 
     window.addEventListener('click', () => {
@@ -309,7 +330,7 @@
 
     initGrid();
     syncStatuses();
-    setInterval(syncStatuses, 1000);
+    setInterval(syncStatuses, 1500);
   </script>
 </body>
 </html>
