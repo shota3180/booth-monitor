@@ -255,7 +255,7 @@
         document.getElementById('syncTime').textContent = `最終更新: ${new Date().toLocaleTimeString()}`;
 
       } catch (e) {
-        // エラー時は静かに処理
+        // エラー時はスキップ
       }
     }
 
@@ -288,11 +288,11 @@
         nextStatus = 'waiting';
       }
 
-      setCardLoading(booth, true, "⏳ 更新中...");
+      setCardLoading(booth, true, "⏳ 認証確認中...");
 
       try {
-        const fetchPromise = fetchWithTimeout(`${GAS_URL}?action=update&booth=${booth}&status=${nextStatus}&_t=${Date.now()}`, 5000);
-        const timerPromise = sleep(2000);
+        const fetchPromise = fetchWithTimeout(`${GAS_URL}?action=update&booth=${booth}&status=${nextStatus}&_t=${Date.now()}`, 6000);
+        const timerPromise = sleep(1500);
 
         const [res] = await Promise.all([fetchPromise, timerPromise]);
         const data = await res.json();
@@ -301,11 +301,16 @@
           lastStatuses[key] = nextStatus;
           processingBooths[booth] = false;
           renderCard(booth, nextStatus);
+        } else if (data.result === 'error') {
+          // 運営確認フォームの不一致エラー時のポップアップ表示
+          alert(data.message || '運営の確認が間違っています。担当者に確認してください');
+          processingBooths[booth] = false;
+          renderCard(booth, currentStatus); // 点検中の状態に維持
         } else {
           throw new Error('Server error');
         }
       } catch (e) {
-        alert('通信に時間がかかりすぎたか、エラーが発生しました。もう一度お試しください。');
+        alert('通信エラーまたはサーバー応答に時間がかかりました。もう一度お試しください。');
         processingBooths[booth] = false;
         syncStatuses();
       }
@@ -320,7 +325,7 @@
 
       try {
         const fetchPromise = fetchWithTimeout(`${GAS_URL}?action=cancel&booth=${booth}&_t=${Date.now()}`, 5000);
-        const timerPromise = sleep(2000);
+        const timerPromise = sleep(1500);
 
         const [res] = await Promise.all([fetchPromise, timerPromise]);
         const data = await res.json();
@@ -333,7 +338,7 @@
           throw new Error('Server error');
         }
       } catch (e) {
-        alert('通信に時間がかかりすぎたか、エラーが発生しました。もう一度お試しください。');
+        alert('通信エラーが発生しました。もう一度お試しください。');
         processingBooths[booth] = false;
         syncStatuses();
       }
