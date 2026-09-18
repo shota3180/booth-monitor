@@ -42,7 +42,7 @@
       transition: all 0.15s ease;
     }
 
-    .booth-title { font-size: 1.5rem; font-weight: bold; }
+    .booth-title { font-size: 1.3rem; font-weight: bold; line-height: 1.3; }
     .status-text { font-size: 0.95rem; color: #94a3b8; font-weight: 500; }
 
     .btn-group {
@@ -143,6 +143,34 @@
     // 🔗 発行したGASのWebアプリURLを入力してください
     const GAS_URL = "https://script.google.com/macros/s/AKfycbwxgDpWJNXlY3is18pYqGUY0KbSo9R-nhjijRUSUeP0olUXMrUeX_wDONZWPf4cgZZw/exec";
 
+    // 🏷️ ここで24店舗の名前を設定します（index 0が店舗1に対応）
+    const BOOTH_NAMES = [
+      "1. 焼きそば屋台",
+      "2. たこ焼き本舗",
+      "3. チュロス王国",
+      "4. タピオカスタンド",
+      "5. フランクフルト",
+      "6. かき氷専門店",
+      "7. カレーハウス",
+      "8. ポップコーン",
+      "9. チョコバナナ",
+      "10. 唐揚げ処",
+      "11. お好み焼き",
+      "12. 水あめ・綿菓子",
+      "13. 水鉄砲射的",
+      "14. 輪投げコーナー",
+      "15. スーパーボールすくい",
+      "16. 軽音ライブ喫茶",
+      "17. 茶道部 お茶会",
+      "18. 美術部 ギャラリー",
+      "19. 写真部 展示室",
+      "20. おばけ屋敷",
+      "21. 卓球体験スペース",
+      "22. 縁日ゲーム広場",
+      "23. eスポーツ大会",
+      "24. 総合案内所"
+    ];
+
     let lastStatuses = {};
     let processingBooths = {};
     let audioCtx = null;
@@ -187,12 +215,14 @@
       const container = document.getElementById('boothContainer');
       container.innerHTML = '';
 
-      for (let i = 1; i <= 20; i++) {
+      // 1〜24店舗のカードを生成
+      for (let i = 1; i <= 24; i++) {
+        const boothName = BOOTH_NAMES[i - 1] || `店舗 ${i}`; // 名前が未定義の場合はフォールバック
         const card = document.createElement('div');
         card.className = 'card';
         card.id = `card-${i}`;
         card.innerHTML = `
-          <div class="booth-title">店舗 ${i}</div>
+          <div class="booth-title">${boothName}</div>
           <div class="status-text" id="status-${i}">🟢 待機中</div>
           <div class="btn-group">
             <button class="btn-action" id="btn-${i}" onclick="handleButtonClick(${i})">待機中</button>
@@ -237,7 +267,8 @@
         const data = await res.json();
         let soundRequired = false;
 
-        for (let i = 1; i <= 20; i++) {
+        // 24店舗分を同期
+        for (let i = 1; i <= 24; i++) {
           const key = String(i);
           const serverStatus = data[key] || 'waiting';
 
@@ -276,6 +307,7 @@
     async function handleButtonClick(booth) {
       const key = String(booth);
       const currentStatus = lastStatuses[key];
+      const name = BOOTH_NAMES[booth - 1] || `店舗 ${booth}`;
       let nextStatus = 'waiting';
 
       if (currentStatus === 'requested') {
@@ -283,7 +315,7 @@
       } else if (currentStatus === 'inspecting') {
         nextStatus = 'completed';
       } else if (currentStatus === 'completed') {
-        const confirmResult = confirm(`店舗 ${booth} の点検完了を取り消し、待機状態にリセットしますか？`);
+        const confirmResult = confirm(`「${name}」の点検完了を取り消し、待機状態にリセットしますか？`);
         if (!confirmResult) return;
         nextStatus = 'waiting';
       }
@@ -302,10 +334,9 @@
           processingBooths[booth] = false;
           renderCard(booth, nextStatus);
         } else if (data.result === 'error') {
-          // 運営確認フォームの不一致エラー時のポップアップ表示
           alert(data.message || '運営の確認が間違っています。担当者に確認してください');
           processingBooths[booth] = false;
-          renderCard(booth, currentStatus); // 点検中の状態に維持
+          renderCard(booth, currentStatus);
         } else {
           throw new Error('Server error');
         }
@@ -318,7 +349,8 @@
 
     async function handleCancelClick(booth) {
       const key = String(booth);
-      const confirmResult = confirm(`店舗 ${booth} の点検要請を取り消しますか？`);
+      const name = BOOTH_NAMES[booth - 1] || `店舗 ${booth}`;
+      const confirmResult = confirm(`「${name}」の点検要請を取り消しますか？`);
       if (!confirmResult) return;
 
       setCardLoading(booth, true, "⏳ 更新中...");
